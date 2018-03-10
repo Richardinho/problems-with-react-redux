@@ -1,0 +1,129 @@
+<style>
+  .fruit-app {
+    padding: 20px;
+    background: pink;
+  }
+  .spinner {
+    animation: spin 2s infinite linear;
+  }
+  @keyframes spin {
+    0%  {transform: rotate(0deg);}
+    100% {transform: rotate(360deg);}
+  }
+
+</style>
+
+<h2>Problems with Redux in building SPA</h2>
+
+<div id="app"></div>
+
+<p>
+  When building Single Page Applications using React, Redux is the go-to module for handling data.
+  I recently wrote an article describing my efforts to build a version of Angular's Heroes app using React.
+  Why I didn't mention in that article was that I had originally tried to build it using Redux, but after encountering some problems with it, I decided to use RxJs Observables (as Angular itself does) instead.
+  In this article, I want to talk about the problem I encountered, and the solution I came up with.
+</p>
+<h2>How Redux works</h2>
+  <p>First a little sidebar on how Redux works.</p>  
+  <p>
+  There is an object, called a <i>store</i>, which contains all the data used within the application.
+  The data from this store flows, via props, through into  all the application's components.
+  The store is updated using a function, which the programmer is responsible for creating, called a <i>reducer</i>. 
+  Everytime the reducer runs, it returns the new state of the store, calculating this from the parameters that are passed to it.
+  The code the developer writes does not call the reducer directly; Instead, he calls the store's <i>dispatch</i> function, passing in an <i>action</i> object. The action object has a <i>type</i> property that simply identifies the kind of action it is and, typically, data that will be merged into the existing state of the store to create a new state.
+  </p>
+<h2>Back to the problem</h2>
+<p>
+I have built a small app, using React, Redux, and React Router, to demonstrate the problem. 
+All it does is display a list of links for various different fruits. 
+When any of these links are clicked on, a panel appears giving a brief description of the fruit.
+The panel is implemented as a Route Component.
+When the user first clicks on a link, this component will be created and mounted into the DOM.
+However, when the user clicks on another link, the same component will be used for displaying the panel. It will not be remounted.
+This is an important point to bear in mind.
+</p>
+<p>
+The data for the <i>description panel</i> comes from the server, so that whenever there is a click on a link a request must be fired off there.
+ As always with dealing with asynchronous code, we need to consider the effects of delays occuring on the network. 
+ The most simple scenario that we have to handle is where users click on a link and then wait for the data to come back from the server and be rendered into the description panel, and only after that clicking on another link. This ensures that there are no problems.
+</p>
+<pre>
+<code>
+client                 server
+  |                      |
+  |          A           |
+  |--------------------->|
+  |                      |
+  |         'A           |
+  |&lt;---------------------|
+  |                      |
+  |          B           |
+  |--------------------->|
+  |                      |
+  |         'B           |
+  |&lt;---------------------|
+  |                      |
+
+</code>
+</pre>
+<p>The above diagram describes the situation.</p>
+<p>But what happens if the user clicks on another link before the data for their previous request has came back?</p>
+<pre>
+<code>
+client                 server
+  |                      |
+  |          A           |
+  |--------------------->|
+  |                      |
+  |          B           |
+  |--------------------->|
+  |                      |
+  |         'A           |
+  |&lt;---------------------|
+  |                      |
+  |                      |
+  |         'B           |
+  |&lt;---------------------|
+  |                      |
+
+</code>
+</pre>
+<p>If the client makes two requests in quick succession, and these both take about the same length of time, then we would expect the first request to come back first and the second request to come back shortly after. For the user, this will mean that they see a flash of the content of the first request being displayed before being replaced by that of the second. This is obviously a poor user experience.</p>
+<p>But it could be even worse. 
+<pre>
+<code>
+client                 server
+  |                      |
+  |          A           |
+  |--------------------->|
+  |                      |
+  |          B           |
+  |--------------------->|
+  |                      |
+  |         'B           |
+  |&lt;---------------------|
+  |                      |
+  |         'A           |
+  |&lt;---------------------|
+  |                      |
+
+</code>
+</pre>
+<p>If there are sufficient delays on the network, the second request could come back <strong>before</strong> the first one. This will be immediately rendered, but then it will be overwritten by the earlier request when it comes back!</p>
+<p>
+This is theoretical, but could it actually happen? 
+My application shows that it does.
+ I have fixed the service that provides data on fruit so that when a request for a banana is made, the response will take 9 seconds to return, in comparison with 3 for apples or tomatoes. If you click on the banana link, then click on the apple link, after 3 seconds the apple description will be rendered into the page. But then 6 seconds later, this will be overwritten by the description for a banana!
+</p>
+<p>
+So what is happening here, and what is at fault?
+Clearly, we would like to be able to cancel existing requests for data whenever the route changes. Promises, however, cannot be cancelled. The problem, though, is more fundamental than that.
+</p>
+<p>
+The problem is that there is not direct relationship between the current route and the data that is rendered.
+The route changing is an event which results in an action being dispatched and the component's props changing, but then so is data coming back from the server. The sequence of these events is important and if they do not occur in the correct order we need to take remedial steps to make sure that they don't cause problems. But currently we have no way of knowing what the sequence of these events is.
+</p>
+<p>
+So how to fix this? Could we write some code to check that any data coming back from the server matches the current route? Absolutely, we could. But a better way is to use streams.
+Streams, unlike promises,  can also be cancelled, but more importantly they embody the concept of a series of connected events.
+We can model the behaviour of a user clicking on different links as a stream of different matching routes. We can then map the items in this streto data fetches from the server and to the rendering of that data on the page.
