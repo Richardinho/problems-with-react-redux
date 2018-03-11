@@ -23,14 +23,13 @@
 <div id="app-with-streams"></div>
 
 <p>
-  When building Single Page Applications using React, Redux is the go-to module for handling data.
+  When building Single Page Applications using React, Redux is the go-to library for handling data.
   I recently wrote an article describing my efforts to build a version of Angular's Heroes app using React.
-  Why I didn't mention in that article was that I had originally tried to build it using Redux, but after encountering some problems with it, I decided to use RxJs Observables (as Angular itself does) instead.
-  In this article, I want to talk about the problem I encountered, and the solution I came up with.
+  What I didn't mention in that article was that I had originally tried using Redux, but after encountering some problems with it, I decided to use RxJs Observables (as Angular itself does) instead.
+  What I discovered was that Redux can lead to an app getting into an inconsistent state. I will describe how in this article.
 </p>
 <h2>How Redux works</h2>
-  <p>First a little sidebar on how Redux works.</p>  
-  <p>
+  <p>First a little primer on how Redux works.
   There is an object, called a <i>store</i>, which contains all the data used within the application.
   The data from this store flows, via props, through into  all the application's components.
   The store is updated using a function, which the programmer is responsible for creating, called a <i>reducer</i>. 
@@ -39,19 +38,22 @@
   </p>
 <h2>Back to the problem</h2>
 <p>
-I have built a small app, using React, Redux, and React Router, to demonstrate the problem. 
-All it does is display a list of links for various different fruits. 
-When any of these links are clicked on, a panel appears giving a brief description of the fruit.
+It turns out that you when you use Redux alongside client side routing you can get to a point where the state of the router is out of sync with the state of the store.
+In order to demonstrate this more clearly, I have created a small <a href="https://stackblitz.com/edit/react-redux-problem">application</a>.
+All it does is display a list of links, which, when clicked on, open up a panel containing a brief description of a fruit. 
+The links continue to be displayed when the panel is shown. 
 The panel is implemented as a Route Component.
-When the user first clicks on a link, this component will be created and mounted into the DOM.
-However, when the user clicks on another link, the same component will be used for displaying the panel. It will not be remounted.
-This is an important point to bear in mind.
 </p>
 <p>
-The data for the <i>description panel</i> comes from the server, so that whenever there is a click on a link a request must be fired off there.
- As always with dealing with asynchronous code, we need to consider the effects of delays occuring on the network. 
- The most simple scenario that we have to handle is where users click on a link and then wait for the data to come back from the server and be rendered into the description panel, and only after that clicking on another link. This ensures that there are no problems.
+An important point to bear in mind is that the lifetime of the component can span multiple navigations.
+When the user first clicks on a link, the component will be mounted into the DOM. But when they click on other links, the component will not be unmounted but will be recycled for rendering these new locations.
 </p>
+<p>
+The data for the <i>description panel</i> comes from the server.
+Every new navigation results in a remote call.
+As always with dealing with asynchronous code we need to consider the effects of delays occuring on the network. 
+</p>
+<p>The most simple scenario, illustrated below, is when the user always waits for data to come back from the server before clicking on another link. Everything works fine in this case. In fact, this is what will normally happen if we assume that the round trip is reasonably brief and the user is not going to be clicking too frequently on the links.</p>
 <pre>
 <code>
 client                 server
@@ -71,8 +73,12 @@ client                 server
 
 </code>
 </pre>
-<p>The above diagram describes the situation.</p>
-<p>But what happens if the user clicks on another link before the data for their previous request has came back?</p>
+<p>
+Of course, we have to allow for network delays, and for the user doing things that we don't want them to do!
+</p>
+<p>
+If the user clicks on a second link before the data for their first request has returned, then two things will happen: first, the data for the first request will return and be rendered onto the page; second, the data for the second request will return and overwrite the data of the first. The effect will be a <i>flash of unwanted content</i> - not a good user experience!
+</p>
 <pre>
 <code>
 client                 server
@@ -93,8 +99,7 @@ client                 server
 
 </code>
 </pre>
-<p>If the client makes two requests in quick succession, and these both take about the same length of time, then we would expect the first request to come back first and the second request to come back shortly after. For the user, this will mean that they see a flash of the content of the first request being displayed before being replaced by that of the second. This is obviously a poor user experience.</p>
-<p>But it could be even worse. 
+<p>But it could be even worse. What if the second request comes back <i>before</i>the first? Then the user will briefly see the data that they <i>do</i> want, followed by it being (permanently) overwritten by the data that they <i>don't</i>! 
 <pre>
 <code>
 client                 server
@@ -114,22 +119,36 @@ client                 server
 
 </code>
 </pre>
-<p>If there are sufficient delays on the network, the second request could come back <strong>before</strong> the first one. This will be immediately rendered, but then it will be overwritten by the earlier request when it comes back!</p>
+<p>You can see by playing around with my demo that this is not a theoretical problem. The request doesn't actually go to a server but just fetches it from a client side service class. I have emulated the effect of network delays by making the call inside a setTimeout callback. Requests for bananas always take longer than requests for any other fruits. Thus if you click on <i>banana</i> then <i>tomato</i> in quick succession, you will see the problem described above.</p>
+<h3>So what's going on?</h3>
 <p>
-This is theoretical, but could it actually happen? 
-My application shows that it does.
- I have fixed the service that provides data on fruit so that when a request for a banana is made, the response will take 9 seconds to return, in comparison with 3 for apples or tomatoes. If you click on the banana link, then click on the apple link, after 3 seconds the apple description will be rendered into the page. But then 6 seconds later, this will be overwritten by the description for a banana!
+The nub of the problem is that there needs to be a deterministic relationship between the current location and the state of the store, but there isn't.
+When the location changes, we fire off a request to the server, but when these requests come back the store is updated with them without any checks that they are the correct data.
 </p>
-<a href="https://stackblitz.com/edit/react-redux-problem">react redux problem</a>
-<p>
-So what is happening here, and what is at fault?
-Clearly, we would like to be able to cancel existing requests for data whenever the route changes. Promises, however, cannot be cancelled. The problem, though, is more fundamental than that.
+<p>Obviously, we could write some code to correct this. Perhaps we could store the id of the data within the response and make sure that it matches the id in our current location. A better solution, I think, is to use <i>Streams</i>, (also known as <i>Observables</i>).
 </p>
-<p>
-The problem is that there is not direct relationship between the current route and the data that is rendered.
-The route changing is an event which results in an action being dispatched and the component's props changing, but then so is data coming back from the server. The sequence of these events is important and if they do not occur in the correct order we need to take remedial steps to make sure that they don't cause problems. But currently we have no way of knowing what the sequence of these events is.
+<p>A Stream, also known as an Observable, is an object which periodically emits pieces of data. Think of it like an array with the added dimension of time (or even think of it as a 'stream'!). Streams are very useful in this context because they embody the idea of a sequence of related events. In our app, the user clicking on a link is an event; a request for data from the server is an event; the data returning from the server is an event. It is important that these events occur in the correct order. When they do not, we need to be able to take the necessary remedial action. Streams make this very possible to do in an elegant way.
 </p>
 <p>
-So how to fix this? Could we write some code to check that any data coming back from the server matches the current route? Absolutely, we could. But a better way is to use streams.
-Streams, unlike promises,  can also be cancelled, but more importantly they embody the concept of a series of connected events.
-We can model the behaviour of a user clicking on different links as a stream of different matching routes. We can then map the items in this streto data fetches from the server and to the rendering of that data on the page.
+I have built a <a href="https://stackblitz.com/edit/react-redux-with-streams?file=index.js">version of this app</a> which uses streams and fixes the problem.
+Whenever the location changes, the Router passes a new <i>match</i> object into the props of the component. We have created a Stream of Match objects. 
+We map this stream to a stream of requests to the server for the corresponding data. Subscribing to this stream gives us the data we need to render the description panel.<p>
+</p>
+<p>An important aspect of this is that we use <i>switchMap</i> for mapping requests. The key feature of switchMap is that it will only emit the data for the latest match object in the underlying stream. Any pending requests to the server are effectively cancelled. This fixes our problem.
+</p>
+<p>Had we used <i>flatMap</i> instead, we would have had the same problem, because that always just emits on the output stream the latest value emited from any inner streams. Streams are therefore not a panacea: You do need to understand how they work, but they are very flexible.</p>
+<h3>Other problems with Redux</h3>
+<p>Besides this, there are other problems that I perceive with Redux.
+We have to describe the state of the app within the reducer function. 
+This gives rise to lots of potential error, I believe.
+We're mixing up UI state (which exists only on the client) with business model state (which has to be synchronised with the server).
+We need to make the structure of the state compatible with the structure of the app as a whole. For example, in a route app, we might need separate reducers for each page of the app.</p>
+<p>
+I question the need for a store at all.There should be a single canonical source of data, and that source should be a database which lives on the server. Client side applications should not be in the business of persisting state. 
+What is the value of a client side store? The browser will do any caching that you require (you could even use service workers), there doesn't seem any reason not to simply fetch any data that you need from the server. 
+</p>
+<p>
+As a principle, I think it's better for things to be done at a component level, and this is true of data management. A component should store any UI state, such as form data, and it should be responsible for deciding what data it needs for rendering itself.</p>
+
+<h3>Conclusion</h3>
+<p>That's probably a rather more controversial note that I've ended on than I'd have liked! I should probably state that I do think there is a use for client side stores in some instances, such as when there is no remote source of data. Dan Abramov (the man behind Redux) himself has cautioned that Redux should not be used for every application. Horses for courses, as they say! Streams are useful in of themselves, of course, and I believe that they do represent the future of data management in client side apps, purely because they reflect so closely the behaviour of those apps themselves.</p>
