@@ -6,7 +6,8 @@ const path = require('path');
 module.exports = {
   entry:[
     'react-hot-loader/patch', 
-    './src/index.js'
+    './src/with-redux/index.js',
+    './src/with-streams/index.js'
   ],
 
   output: {

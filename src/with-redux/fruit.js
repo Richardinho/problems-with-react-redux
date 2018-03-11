@@ -1,7 +1,7 @@
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
-import FruitService from './fruit-service';
-import Spinner from './spinner';
+import FruitService from '../fruit-service';
+import Spinner from '../spinner';
 const fruitService = new FruitService(); 
 
 class Fruit extends Component {

@@ -3,6 +3,10 @@
     padding: 20px;
     background: pink;
   }
+  .fruit-app-with-streams {
+    padding: 20px;
+    background: yellow;
+  }
   .spinner {
     animation: spin 2s infinite linear;
   }
@@ -13,9 +17,10 @@
 
 </style>
 
-<h2>Problems with Redux in building SPA</h2>
+<h2>Why Streams are better than Redux for Single Page Apps</h2>
 
 <div id="app"></div>
+<div id="app-with-streams"></div>
 
 <p>
   When building Single Page Applications using React, Redux is the go-to module for handling data.
@@ -115,6 +120,7 @@ This is theoretical, but could it actually happen?
 My application shows that it does.
  I have fixed the service that provides data on fruit so that when a request for a banana is made, the response will take 9 seconds to return, in comparison with 3 for apples or tomatoes. If you click on the banana link, then click on the apple link, after 3 seconds the apple description will be rendered into the page. But then 6 seconds later, this will be overwritten by the description for a banana!
 </p>
+<a href="https://stackblitz.com/edit/react-redux-problem">react redux problem</a>
 <p>
 So what is happening here, and what is at fault?
 Clearly, we would like to be able to cancel existing requests for data whenever the route changes. Promises, however, cannot be cancelled. The problem, though, is more fundamental than that.
